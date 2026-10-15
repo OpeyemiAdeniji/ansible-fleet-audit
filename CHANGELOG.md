@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-15
+
 ### Added
 - Simulated 50-host fleet (20 web, 20 app, 10 db) as Docker containers with SSH, with seeded incidents.
 - Dynamic inventory script that groups hosts by role from container labels.
