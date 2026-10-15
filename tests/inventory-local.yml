@@ -1,0 +1,13 @@
+---
+# A one-host "fleet" that is the machine running the test (no Docker or SSH needed).
+# Used by tests/run_local_audit.sh to exercise the whole playbook, including the reports.
+all:
+  children:
+    fleet:
+      children:
+        web:
+          hosts:
+            localhost:
+              ansible_connection: local
+        app: {}
+        db: {}

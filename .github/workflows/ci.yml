@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run pre-commit on all files
+        run: |
+          pip install pre-commit
+          pre-commit run --all-files --show-diff-on-failure
+
+  secrets:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  ansible:
+    name: ansible-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Ansible and ansible-lint
+        run: pip install -r requirements.txt
+      - name: Lint playbooks
+        run: ansible-lint
+      - name: Syntax check
+        run: ansible-playbook -i tests/inventory-local.yml playbooks/audit.yml --syntax-check
+      - name: Inventory unit tests
+        run: python3 -m unittest discover -s tests -v
+      - name: End-to-end audit against the runner itself
+        run: bash tests/run_local_audit.sh
+
+  # Keep the job names stable: branch protection matches required checks by name.
+  # The 50-container fleet is not started in CI; run `make fleet-up && make audit` locally.

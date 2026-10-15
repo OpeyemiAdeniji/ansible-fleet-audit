@@ -1,0 +1,18 @@
+---
+
+# The role groups that make up the fleet
+fleet_roles: [web, app, db]
+
+# Thresholds. A host breaching a "crit" threshold is CRIT, a "warn" breach is WARN.
+disk_warn_pct: 80          # any audited filesystem this full or fuller
+disk_crit_pct: 90
+mem_avail_warn_pct: 15     # available memory below this share of total
+load_per_cpu_warn: 3.0     # 1-minute load average divided by CPU count
+
+# Set true (or pass -e fail_on_critical=true) to make the run exit non-zero when any host is
+# CRIT, UNREACHABLE or ERROR. Useful when the audit runs from a scheduler.
+fail_on_critical: false
+
+# Per-role expectations, overridden in web.yml, app.yml and db.yml
+expected_processes: []
+expected_ports: []

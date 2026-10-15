@@ -1,0 +1,3 @@
+---
+expected_processes: [socat]
+expected_ports: [5432]

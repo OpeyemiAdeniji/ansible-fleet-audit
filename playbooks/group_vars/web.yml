@@ -1,0 +1,3 @@
+---
+expected_processes: [nginx]
+expected_ports: [80]

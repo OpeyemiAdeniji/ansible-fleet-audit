@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet audit {{ run_id }}</title>
+<style>
+  :root { --ok: #1a7f37; --warn: #9a6700; --crit: #cf222e; --down: #57606a; --line: #d0d7de; --bg: #ffffff; --fg: #1f2328; --soft: #f6f8fa; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ok: #3fb950; --warn: #d29922; --crit: #f85149; --down: #8b949e; --line: #30363d; --bg: #0d1117; --fg: #e6edf3; --soft: #161b22; }
+  }
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg); }
+  main { max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .meta { color: var(--down); margin-bottom: 20px; }
+  .tiles { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
+  .tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; min-width: 110px; background: var(--soft); }
+  .tile b { display: block; font-size: 24px; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+  td.wrap { white-space: normal; min-width: 240px; }
+  th { background: var(--soft); position: sticky; top: 0; }
+  .badge { font-weight: 600; }
+  .OK { color: var(--ok); } .WARN { color: var(--warn); } .CRIT { color: var(--crit); }
+  .UNREACHABLE, .ERROR { color: var(--down); }
+</style>
+</head>
+<body>
+<main>
+<h1>Fleet audit</h1>
+<div class="meta">Run {{ run_id }} &middot; thresholds: disk warn {{ disk_warn_pct }}% / crit {{ disk_crit_pct }}%, available memory below {{ mem_avail_warn_pct }}%, load per CPU {{ load_per_cpu_warn }}</div>
+
+<div class="tiles">
+  <div class="tile"><b>{{ fleet_records | length }}</b>hosts</div>
+  <div class="tile"><b class="UNREACHABLE">{{ fleet_records | selectattr('rank', 'equalto', 0) | list | length }}</b>unreachable / error</div>
+  <div class="tile"><b class="CRIT">{{ fleet_records | selectattr('status', 'equalto', 'CRIT') | list | length }}</b>critical</div>
+  <div class="tile"><b class="WARN">{{ fleet_records | selectattr('status', 'equalto', 'WARN') | list | length }}</b>warning</div>
+  <div class="tile"><b class="OK">{{ fleet_records | selectattr('status', 'equalto', 'OK') | list | length }}</b>ok</div>
+</div>
+
+<div class="table-wrap">
+<table>
+<thead>
+<tr><th>Host</th><th>Role</th><th>Status</th><th>Issues</th><th>Disk max</th><th>Mem avail</th><th>Load</th><th>CPUs</th><th>Uptime (d)</th><th>OS</th><th>Listening ports</th></tr>
+</thead>
+<tbody>
+{% for r in fleet_records %}
+<tr>
+  <td>{{ r.host | e }}</td>
+  <td>{{ r.role | e }}</td>
+  <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+  <td class="wrap">{{ r.issues | default([]) | join('; ') | e }}</td>
+  <td>{{ r.max_disk_pct | default('-') }}{% if r.max_disk_pct is defined %}%{% endif %}</td>
+  <td>{{ r.mem_avail_pct | default('-') }}{% if r.mem_avail_pct is defined %}%{% endif %}</td>
+  <td>{{ r.load1 | default('-') }}</td>
+  <td>{{ r.cpus | default('-') }}</td>
+  <td>{{ r.uptime_days | default('-') }}</td>
+  <td>{{ r.os | default('-') | e }}</td>
+  <td>{{ r.ports | default([]) | join(' ') }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</main>
+</body>
+</html>

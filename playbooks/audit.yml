@@ -1,0 +1,210 @@
+---
+# Fleet audit. Two plays:
+#   1. Collect: runs on every host in the "fleet" group (in parallel, up to `forks` at a time).
+#      Each host ends up with one `audit` variable describing its health.
+#   2. Report: runs once on the control node, reads every host's `audit` variable and writes
+#      the CSV, HTML and JSON reports.
+# Thresholds and per-role expectations live in playbooks/group_vars/.
+
+- name: Collect audit data from every host
+  hosts: fleet
+  gather_facts: false
+  tasks:
+    - name: Check the host is reachable
+      ansible.builtin.ping:
+      register: reach
+      # An unreachable host must not abort the run. Ansible records the failure and carries on.
+      ignore_unreachable: true
+
+    - name: Audit the host
+      # Everything inside this block is skipped for hosts that did not answer the ping.
+      when: not (reach.unreachable | default(false))
+      block:
+        - name: Gather OS facts
+          ansible.builtin.setup:
+            gather_subset: [min]
+
+        - name: Count CPUs
+          ansible.builtin.command: nproc
+          register: cpu_out
+          changed_when: false
+
+        - name: Read 1-minute load average
+          ansible.builtin.command: cat /proc/loadavg
+          register: load_out
+          changed_when: false
+
+        - name: Read uptime
+          ansible.builtin.command: cat /proc/uptime
+          register: uptime_out
+          changed_when: false
+
+        - name: Read total and available memory in MB
+          ansible.builtin.command:
+            argv:
+              - awk
+              - '/^MemTotal/ {t = $2} /^MemAvailable/ {a = $2} END {printf "%d %d\n", t / 1024, a / 1024}'
+              - /proc/meminfo
+          register: mem_out
+          changed_when: false
+
+        - name: Read filesystem usage (mount point and use%)
+          ansible.builtin.shell: |
+            set -o pipefail
+            df -P -x squashfs -x iso9660 -x erofs | awk 'NR > 1 && $6 !~ /^\/(proc|sys|dev|run|etc)(\/|$)/ {print $6, $5}'
+          args:
+            executable: /bin/bash
+          register: disk_out
+          changed_when: false
+
+        - name: List running process names
+          ansible.builtin.command: ps -eo comm=
+          register: ps_out
+          changed_when: false
+
+        - name: List listening TCP ports
+          ansible.builtin.command: ss -H -ltn
+          register: ss_out
+          changed_when: false
+
+        - name: Turn raw command output into numbers and lists
+          ansible.builtin.set_fact:
+            m_cpus: "{{ cpu_out.stdout | trim | int }}"
+            m_load1: "{{ load_out.stdout.split()[0] | float }}"
+            m_uptime_days: "{{ (uptime_out.stdout.split()[0] | float / 86400) | round(1) }}"
+            m_mem_total_mb: "{{ mem_out.stdout.split()[0] | int }}"
+            m_mem_avail_mb: "{{ mem_out.stdout.split()[1] | int }}"
+            # Numbers are pulled out with regex_search (lookahead and lookbehind) rather than regex_replace
+            # with a backreference, because backreference escaping differs between YAML styles and Ansible versions.
+            m_disk_pcts: "{{ disk_out.stdout_lines | map('regex_search', '[0-9]+(?=%$)') | select | map('int') | list }}"
+            m_procs: "{{ ps_out.stdout_lines | map('trim') | unique | list }}"
+            m_ports: "{{ ss_out.stdout_lines | map('regex_search', '(?<=:)[0-9]+(?= )') | select | map('int') | unique | sort | list }}"
+
+        - name: Compare the numbers with the thresholds and expectations
+          ansible.builtin.set_fact:
+            m_disk_max: "{{ (m_disk_pcts + [0]) | max }}"
+            m_mem_avail_pct: "{{ ((m_mem_avail_mb | int) * 100 / (m_mem_total_mb | int)) | round(1) }}"
+            m_load_per_cpu: "{{ ((m_load1 | float) / (m_cpus | int)) | round(2) }}"
+            m_missing_procs: "{{ expected_processes | difference(m_procs) }}"
+            m_missing_ports: "{{ expected_ports | difference(m_ports) }}"
+
+        - name: List critical problems
+          ansible.builtin.set_fact:
+            m_crit: >-
+              {{
+                (['disk ' ~ m_disk_max ~ '% full (critical at ' ~ disk_crit_pct ~ '%)'] if (m_disk_max | int) >= (disk_crit_pct | int) else [])
+                + (['process not running: ' ~ (m_missing_procs | join(', '))] if (m_missing_procs | length) > 0 else [])
+                + (['port not listening: ' ~ (m_missing_ports | join(', '))] if (m_missing_ports | length) > 0 else [])
+              }}
+
+        - name: List warnings
+          ansible.builtin.set_fact:
+            m_warn: >-
+              {{
+                (['disk ' ~ m_disk_max ~ '% full (warning at ' ~ disk_warn_pct ~ '%)']
+                  if ((m_disk_max | int) >= (disk_warn_pct | int) and (m_disk_max | int) < (disk_crit_pct | int))
+                  else [])
+                + (['available memory ' ~ m_mem_avail_pct ~ '% (warning below ' ~ mem_avail_warn_pct ~ '%)']
+                  if (m_mem_avail_pct | float) < (mem_avail_warn_pct | float)
+                  else [])
+                + (['load per CPU ' ~ m_load_per_cpu ~ ' (warning at ' ~ load_per_cpu_warn ~ ')']
+                  if (m_load_per_cpu | float) >= (load_per_cpu_warn | float)
+                  else [])
+              }}
+
+        - name: Build the audit record for this host
+          ansible.builtin.set_fact:
+            audit:
+              host: "{{ inventory_hostname }}"
+              role: "{{ ((group_names | intersect(fleet_roles)) + ['unknown']) | first }}"
+              status: "{{ 'CRIT' if (m_crit | length) > 0 else ('WARN' if (m_warn | length) > 0 else 'OK') }}"
+              rank: "{{ 1 if (m_crit | length) > 0 else (2 if (m_warn | length) > 0 else 3) }}"
+              os: "{{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}"
+              cpus: "{{ m_cpus }}"
+              uptime_days: "{{ m_uptime_days }}"
+              load1: "{{ m_load1 }}"
+              mem_total_mb: "{{ m_mem_total_mb }}"
+              mem_avail_pct: "{{ m_mem_avail_pct }}"
+              max_disk_pct: "{{ m_disk_max }}"
+              disks: "{{ disk_out.stdout_lines }}"
+              ports: "{{ m_ports }}"
+              issues: "{{ m_crit + m_warn }}"
+
+- name: Build the fleet reports
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Stop early when the inventory has no fleet
+      ansible.builtin.assert:
+        that: (groups['fleet'] | default([])) | length > 0
+        fail_msg: "No hosts in group 'fleet'. Is the simulated fleet running? Try: make fleet-up"
+        quiet: true
+
+    - name: Fix one timestamp for every report file of this run
+      ansible.builtin.set_fact:
+        run_id: "{{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}"
+        report_dir: "{{ playbook_dir | dirname }}/reports"
+
+    - name: Assemble one record per host, including hosts that returned no data
+      ansible.builtin.set_fact:
+        fleet_records_json: >-
+          {%- set out = [] -%}
+          {%- for h in groups['fleet'] | sort -%}
+          {%- set hv = hostvars[h] -%}
+          {%- if hv.audit is defined -%}
+          {%- set _ = out.append(hv.audit) -%}
+          {%- else -%}
+          {%- set unreachable = (hv.reach | default({})).unreachable | default(false) -%}
+          {%- set _ = out.append({
+                'host': h,
+                'role': ((hv.group_names | intersect(fleet_roles)) + ['unknown']) | first,
+                'status': 'UNREACHABLE' if unreachable else 'ERROR',
+                'rank': 0,
+                'issues': ['cannot connect over SSH'] if unreachable else ['connected, but the audit tasks failed']
+              }) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ out | to_json }}
+
+    - name: Parse the records and sort the worst hosts first
+      ansible.builtin.set_fact:
+        fleet_records: "{{ ((fleet_records_json | from_json) if fleet_records_json is string else fleet_records_json) | sort(attribute='rank') }}"
+
+    - name: Create the reports folder
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write the CSV and HTML reports (a timestamped copy and a "latest" copy)
+      ansible.builtin.template:
+        src: "report.{{ item[1] }}.j2"
+        dest: "{{ report_dir }}/{{ item[0] }}.{{ item[1] }}"
+        mode: "0644"
+      loop: "{{ ['audit-' ~ run_id, 'latest'] | product(['csv', 'html']) | list }}"
+
+    - name: Write the JSON report (for other tools to read)
+      ansible.builtin.copy:
+        content: "{{ fleet_records | to_nice_json }}\n"
+        dest: "{{ report_dir }}/{{ item }}.json"
+        mode: "0644"
+      loop: ["audit-{{ run_id }}", "latest"]
+
+    - name: Summarise the result
+      ansible.builtin.debug:
+        msg:
+          - "Hosts audited: {{ fleet_records | length }}"
+          - >-
+            UNREACHABLE/ERROR: {{ fleet_records | selectattr('rank', 'equalto', 0) | list | length }},
+            CRIT: {{ fleet_records | selectattr('status', 'equalto', 'CRIT') | list | length }},
+            WARN: {{ fleet_records | selectattr('status', 'equalto', 'WARN') | list | length }},
+            OK: {{ fleet_records | selectattr('status', 'equalto', 'OK') | list | length }}
+          - "Reports written to {{ report_dir }}/latest.html (and .csv, .json)"
+
+    - name: Fail the run when any host needs urgent attention
+      ansible.builtin.assert:
+        that: (fleet_records | selectattr('rank', 'lt', 2) | list | length) == 0
+        fail_msg: "{{ fleet_records | selectattr('rank', 'lt', 2) | list | length }} host(s) are CRIT, UNREACHABLE or ERROR. See the report."
+        quiet: true
+      when: fail_on_critical | bool
