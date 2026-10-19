@@ -33,8 +33,8 @@ flowchart LR
 ```
 
 1. The inventory script asks Docker which containers carry the `fleet.audit` label and groups them by their `fleet.role` label.
-2. The first play runs on every host in parallel. Each host collects its own numbers, compares them with the thresholds in `playbooks/group_vars/`, and stores one `audit` record.
-3. The second play runs once on the control node. It gathers every host's record (or notes that none exists) and writes the reports.
+2. The first play applies the `audit_host` role to every host in parallel. Each host collects its own numbers, compares them with the thresholds in `playbooks/group_vars/`, and stores one `audit_host_record`.
+3. The second play applies the `audit_report` role once on the control node. It gathers every host's record (or notes that none exists) and writes the reports.
 
 ## Quick start
 
@@ -69,11 +69,31 @@ Edit `INCIDENTS` in `scripts/generate_fleet.py` to build your own scenarios.
 | Disk | `df -P`, every real filesystem (read-only images such as squashfs, iso9660 and erofs are skipped: they are always 100% full) | at or above 80% (warn) or 90% (crit) |
 | Memory | `MemAvailable` from `/proc/meminfo` | available below 15% of total (warn) |
 | CPU load | 1-minute load average divided by CPU count | at or above 1.0 (warn) |
-| Processes | `ps` against the role's `expected_processes` | an expected process is missing (crit) |
-| Ports | `ss -ltn` against the role's `expected_ports` | an expected port is not listening (crit) |
+| Processes | `ps` against the role's `audit_host_expected_processes` | an expected process is missing (crit) |
+| Ports | `ss -ltn` against the role's `audit_host_expected_ports` | an expected port is not listening (crit) |
 | Also recorded | uptime, OS and version, all listening ports | |
 
-All thresholds and expectations live in [`playbooks/group_vars/`](playbooks/group_vars/). Change a number, re-run, no code edits.
+All thresholds and expectations live in [`playbooks/group_vars/`](playbooks/group_vars/) and override the defaults in each role. Change a number, re-run, no code edits.
+
+## Project layout
+
+```text
+playbooks/
+  audit.yml                    two plays, each one just calls a role
+  group_vars/                  thresholds (all.yml) and per-role expectations (web, app, db)
+  roles/
+    audit_host/                collects and judges one host (runs on every host)
+    audit_report/              builds CSV, HTML and JSON from all hosts' records (runs once)
+inventory/
+  docker_inventory.py          dynamic inventory for the simulated fleet
+  examples/                    cloud inventory examples (not exercised in this repo, see below)
+```
+
+## Cloud inventories and credentials
+
+The audit roles do not care where hosts come from, only that they are in the `fleet` group with a role group (`web`, `app`, `db`). The simulated fleet uses Docker. For real clouds, [`inventory/examples/`](inventory/examples/) holds example inventory files for AWS (`aws_ec2`), Azure (`azure_rm`) and GCP (`gcp_compute`).
+
+**These examples have not been run in this repository.** They document the intended design: Ansible gets short-lived credentials from an assumed role or workload identity, never a stored access key. The reasoning is in [ADR 0004](docs/adr/0004-no-long-lived-cloud-credentials.md). Real runs are planned for AWS first, then Azure and GCP.
 
 ## Reports
 
@@ -106,6 +126,7 @@ See [`docs/adr/`](docs/adr/):
 - [0001](docs/adr/0001-simulate-the-fleet-with-containers.md): simulate the fleet with containers
 - [0002](docs/adr/0002-dynamic-inventory-script.md): a dynamic inventory script instead of a static file
 - [0003](docs/adr/0003-collect-then-aggregate.md): collect on each host, aggregate on the control node
+- [0004](docs/adr/0004-no-long-lived-cloud-credentials.md): no long-lived cloud credentials; roles and workload identity
 
 ## Contributing
 

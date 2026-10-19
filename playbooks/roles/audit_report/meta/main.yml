@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Opeyemi Adeniji
+  description: Collects the per-host audit records and writes ranked CSV, HTML and JSON fleet reports.
+  license: MIT
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+  galaxy_tags: []
+dependencies: []

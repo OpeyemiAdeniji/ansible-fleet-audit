@@ -36,7 +36,7 @@ audit: ## Run the fleet audit and write reports/latest.{html,csv,json}
 	ansible-playbook playbooks/audit.yml
 
 audit-strict: ## Same as audit, but exit non-zero if any host is CRIT/UNREACHABLE/ERROR
-	ansible-playbook playbooks/audit.yml -e fail_on_critical=true
+	ansible-playbook playbooks/audit.yml -e audit_report_fail_on_critical=true
 
 unit: ## Run the inventory unit tests (no Docker needed)
 	python3 -m unittest discover -s tests -v

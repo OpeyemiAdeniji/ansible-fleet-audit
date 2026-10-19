@@ -22,7 +22,7 @@ Useful variations:
 | Audit one role | `ansible-playbook playbooks/audit.yml --limit web` |
 | Audit one host | `ansible-playbook playbooks/audit.yml --limit web-07` |
 | Run with fewer parallel hosts | `ansible-playbook playbooks/audit.yml -f 5` |
-| Stricter disk threshold for this run | `ansible-playbook playbooks/audit.yml -e disk_warn_pct=70` |
+| Stricter disk threshold for this run | `ansible-playbook playbooks/audit.yml -e audit_host_disk_warn_pct=70` |
 
 When you use `--limit`, the report only contains the hosts you selected.
 
@@ -93,10 +93,10 @@ Edit `playbooks/group_vars/all.yml` for thresholds and `web.yml`, `app.yml` or `
 
 ## 5. Add a new check
 
-1. Add a command task in `playbooks/audit.yml` that registers its output.
+1. Add a command task in `playbooks/roles/audit_host/tasks/main.yml` that registers its output (name it `audit_host_...`).
 2. Turn the output into a number or list in the "Turn raw command output" step.
-3. Add a threshold to `group_vars/all.yml` and a rule in the "List critical problems" or "List warnings" step.
-4. Add a column to `report.csv.j2` and `report.html.j2` if it should be visible.
+3. Add a default threshold in `playbooks/roles/audit_host/defaults/main.yml` (override it in `playbooks/group_vars/all.yml`) and a rule in the "List critical problems" or "List warnings" step.
+4. Add the value to `audit_host_record`, then a column to `report.csv.j2` and `report.html.j2` in `playbooks/roles/audit_report/templates/` if it should be visible.
 
 ## 6. Troubleshooting the tool itself
 

@@ -15,7 +15,7 @@ Each host's data must end up in one report, including hosts that could not be re
 
 ## Decision
 
-Two plays. The first runs on every host and builds an `audit` record per host. The second runs on `localhost`, reads `hostvars`, and renders the CSV, HTML and JSON from templates. The ping task uses `ignore_unreachable`, and the collection tasks are skipped for hosts that did not answer.
+Two plays. The first runs on every host and builds an `audit_host_record` per host (the `audit_host` role). The second runs on `localhost`, reads `hostvars`, and renders the CSV, HTML and JSON from templates (the `audit_report` role). The ping task uses `ignore_unreachable`, and the collection tasks are skipped for hosts that did not answer.
 
 ## Consequences
 

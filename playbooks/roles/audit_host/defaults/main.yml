@@ -1,0 +1,18 @@
+---
+# Defaults for the audit_host role. Every value can be overridden from group_vars, host_vars or -e.
+# Variable names start with the role name (audit_host_) so they cannot clash with other roles.
+
+# Inventory groups that count as a host's "role" in the report (web, app, db ...).
+# The first group a host belongs to from this list becomes its role.
+audit_host_roles: [web, app, db]
+
+# Thresholds. A breach of a "crit" threshold makes the host CRIT, a "warn" breach makes it WARN.
+audit_host_disk_warn_pct: 80           # any audited filesystem this full or fuller
+audit_host_disk_crit_pct: 90
+audit_host_mem_avail_warn_pct: 15      # available memory below this share of total
+audit_host_load_per_cpu_warn: 1.0      # 1-minute load average divided by CPU count
+
+# What this host is expected to be running. Empty means "nothing in particular".
+# Set them per inventory group in playbooks/group_vars/web.yml, app.yml, db.yml.
+audit_host_expected_processes: []
+audit_host_expected_ports: []

@@ -1,0 +1,16 @@
+---
+# EXAMPLE, not exercised in this repo. Azure inventory using a managed identity, not a client secret.
+# Run this from an Azure VM or container with a managed identity that has the Reader role on the
+# resource group. From CI, use workload identity federation (OIDC) instead of a secret.
+plugin: azure.azcollection.azure_rm
+auth_source: msi
+include_vm_resource_groups:
+  - rg-fleet-audit
+conditional_groups:
+  fleet: true
+keyed_groups:
+  # tag Role=web puts the host in group "web"
+  - key: tags.Role | default('unknown')
+    prefix: ""
+    separator: ""
+plain_host_names: true
