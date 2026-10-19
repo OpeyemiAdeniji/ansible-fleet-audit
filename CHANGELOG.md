@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-19
+
 ### Added
 - Ansible roles: `audit_host` (collect and judge one host) and `audit_report` (build the reports).
 - Example inventories for AWS, Azure and GCP using short-lived identity, clearly marked as not exercised here.
