@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fleet audit {{ run_id }}</title>
+<title>Fleet audit {{ audit_report_run_id }}</title>
 <style>
   :root { --ok: #1a7f37; --warn: #9a6700; --crit: #cf222e; --down: #57606a; --line: #d0d7de; --bg: #ffffff; --fg: #1f2328; --soft: #f6f8fa; }
   @media (prefers-color-scheme: dark) {
@@ -29,14 +29,14 @@
 <body>
 <main>
 <h1>Fleet audit</h1>
-<div class="meta">Run {{ run_id }} &middot; thresholds: disk warn {{ disk_warn_pct }}% / crit {{ disk_crit_pct }}%, available memory below {{ mem_avail_warn_pct }}%, load per CPU {{ load_per_cpu_warn }}</div>
+<div class="meta">Run {{ audit_report_run_id }} &middot; thresholds: disk warn {{ audit_host_disk_warn_pct | default('n/a') }}% / crit {{ audit_host_disk_crit_pct | default('n/a') }}%, available memory below {{ audit_host_mem_avail_warn_pct | default('n/a') }}%, load per CPU {{ audit_host_load_per_cpu_warn | default('n/a') }}</div>
 
 <div class="tiles">
-  <div class="tile"><b>{{ fleet_records | length }}</b>hosts</div>
-  <div class="tile"><b class="UNREACHABLE">{{ fleet_records | selectattr('rank', 'equalto', 0) | list | length }}</b>unreachable / error</div>
-  <div class="tile"><b class="CRIT">{{ fleet_records | selectattr('status', 'equalto', 'CRIT') | list | length }}</b>critical</div>
-  <div class="tile"><b class="WARN">{{ fleet_records | selectattr('status', 'equalto', 'WARN') | list | length }}</b>warning</div>
-  <div class="tile"><b class="OK">{{ fleet_records | selectattr('status', 'equalto', 'OK') | list | length }}</b>ok</div>
+  <div class="tile"><b>{{ audit_report_records | length }}</b>hosts</div>
+  <div class="tile"><b class="UNREACHABLE">{{ audit_report_records | selectattr('rank', 'equalto', 0) | list | length }}</b>unreachable / error</div>
+  <div class="tile"><b class="CRIT">{{ audit_report_records | selectattr('status', 'equalto', 'CRIT') | list | length }}</b>critical</div>
+  <div class="tile"><b class="WARN">{{ audit_report_records | selectattr('status', 'equalto', 'WARN') | list | length }}</b>warning</div>
+  <div class="tile"><b class="OK">{{ audit_report_records | selectattr('status', 'equalto', 'OK') | list | length }}</b>ok</div>
 </div>
 
 <div class="table-wrap">
@@ -45,7 +45,7 @@
 <tr><th>Host</th><th>Role</th><th>Status</th><th>Issues</th><th>Disk max</th><th>Mem avail</th><th>Load</th><th>CPUs</th><th>Uptime (d)</th><th>OS</th><th>Listening ports</th></tr>
 </thead>
 <tbody>
-{% for r in fleet_records %}
+{% for r in audit_report_records %}
 <tr>
   <td>{{ r.host | e }}</td>
   <td>{{ r.role | e }}</td>

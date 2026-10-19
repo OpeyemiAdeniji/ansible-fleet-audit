@@ -1,0 +1,16 @@
+---
+# Defaults for the audit_report role. Every value can be overridden from group_vars or -e.
+
+# The inventory group that holds every audited host.
+audit_report_group: fleet
+
+# Inventory groups that count as a host's "role". Used only for hosts that returned no data,
+# so their placeholder row still shows a role. Keep it equal to audit_host_roles.
+audit_report_roles: [web, app, db]
+
+# Where the reports are written. By default: the reports/ folder at the top of the repository.
+audit_report_dir: "{{ playbook_dir | dirname }}/reports"
+
+# Set true (or pass -e audit_report_fail_on_critical=true) to make the run exit non-zero when any host is
+# CRIT, UNREACHABLE or ERROR. Useful when the audit runs from a scheduler.
+audit_report_fail_on_critical: false

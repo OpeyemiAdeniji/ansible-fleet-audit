@@ -1,0 +1,132 @@
+---
+# Audit one host. The role only reads: it never changes the machine.
+# It leaves one variable on the host, `audit_host_record`, which the audit_report role collects.
+# Hosts that do not answer the ping get no record; audit_report turns that into UNREACHABLE.
+
+- name: Check the host is reachable
+  ansible.builtin.ping:
+  register: audit_host_reach
+  # An unreachable host must not abort the run. Ansible records the failure and carries on.
+  ignore_unreachable: true
+
+- name: Audit the host
+  # Everything inside this block is skipped for hosts that did not answer the ping.
+  when: not (audit_host_reach.unreachable | default(false))
+  block:
+    - name: Gather OS facts
+      ansible.builtin.setup:
+        gather_subset: [min]
+
+    - name: Count CPUs
+      ansible.builtin.command: nproc
+      register: audit_host_cpu_out
+      changed_when: false
+
+    - name: Read 1-minute load average
+      ansible.builtin.command: cat /proc/loadavg
+      register: audit_host_load_out
+      changed_when: false
+
+    - name: Read uptime
+      ansible.builtin.command: cat /proc/uptime
+      register: audit_host_uptime_out
+      changed_when: false
+
+    - name: Read total and available memory in MB
+      ansible.builtin.command:
+        argv:
+          - awk
+          - '/^MemTotal/ {t = $2} /^MemAvailable/ {a = $2} END {printf "%d %d\n", t / 1024, a / 1024}'
+          - /proc/meminfo
+      register: audit_host_mem_out
+      changed_when: false
+
+    - name: Read filesystem usage (mount point and use%)
+      # Read-only image filesystems (squashfs, iso9660, erofs) are always 100% full, so they are skipped.
+      ansible.builtin.shell: |
+        set -o pipefail
+        df -P -x squashfs -x iso9660 -x erofs | awk 'NR > 1 && $6 !~ /^\/(proc|sys|dev|run|etc)(\/|$)/ {print $6, $5}'
+      args:
+        executable: /bin/bash
+      register: audit_host_disk_out
+      changed_when: false
+
+    - name: List running process names
+      ansible.builtin.command: ps -eo comm=
+      register: audit_host_ps_out
+      changed_when: false
+
+    - name: List listening TCP ports
+      ansible.builtin.command: ss -H -ltn
+      register: audit_host_ss_out
+      changed_when: false
+
+    - name: Turn raw command output into numbers and lists
+      ansible.builtin.set_fact:
+        audit_host_cpus: "{{ audit_host_cpu_out.stdout | trim | int }}"
+        audit_host_load1: "{{ audit_host_load_out.stdout.split()[0] | float }}"
+        audit_host_uptime_days: "{{ (audit_host_uptime_out.stdout.split()[0] | float / 86400) | round(1) }}"
+        audit_host_mem_total_mb: "{{ audit_host_mem_out.stdout.split()[0] | int }}"
+        audit_host_mem_avail_mb: "{{ audit_host_mem_out.stdout.split()[1] | int }}"
+        # Numbers are pulled out with regex_search (lookahead and lookbehind) rather than regex_replace
+        # with a backreference, because backreference escaping differs between YAML styles and Ansible versions.
+        audit_host_disk_pcts: "{{ audit_host_disk_out.stdout_lines | map('regex_search', '[0-9]+(?=%$)') | select | map('int') | list }}"
+        audit_host_procs: "{{ audit_host_ps_out.stdout_lines | map('trim') | unique | list }}"
+        audit_host_ports: "{{ audit_host_ss_out.stdout_lines | map('regex_search', '(?<=:)[0-9]+(?= )') | select | map('int') | unique | sort | list }}"
+
+    - name: Compare the numbers with the thresholds and expectations
+      ansible.builtin.set_fact:
+        audit_host_disk_max: "{{ (audit_host_disk_pcts + [0]) | max }}"
+        audit_host_mem_avail_pct: "{{ ((audit_host_mem_avail_mb | int) * 100 / (audit_host_mem_total_mb | int)) | round(1) }}"
+        audit_host_load_per_cpu: "{{ ((audit_host_load1 | float) / (audit_host_cpus | int)) | round(2) }}"
+        audit_host_missing_procs: "{{ audit_host_expected_processes | difference(audit_host_procs) }}"
+        audit_host_missing_ports: "{{ audit_host_expected_ports | difference(audit_host_ports) }}"
+
+    - name: List critical problems
+      ansible.builtin.set_fact:
+        audit_host_crit: >-
+          {{
+            (['disk ' ~ audit_host_disk_max ~ '% full (critical at ' ~ audit_host_disk_crit_pct ~ '%)']
+              if (audit_host_disk_max | int) >= (audit_host_disk_crit_pct | int)
+              else [])
+            + (['process not running: ' ~ (audit_host_missing_procs | join(', '))]
+              if (audit_host_missing_procs | length) > 0
+              else [])
+            + (['port not listening: ' ~ (audit_host_missing_ports | join(', '))]
+              if (audit_host_missing_ports | length) > 0
+              else [])
+          }}
+
+    - name: List warnings
+      ansible.builtin.set_fact:
+        audit_host_warn: >-
+          {{
+            (['disk ' ~ audit_host_disk_max ~ '% full (warning at ' ~ audit_host_disk_warn_pct ~ '%)']
+              if ((audit_host_disk_max | int) >= (audit_host_disk_warn_pct | int)
+                  and (audit_host_disk_max | int) < (audit_host_disk_crit_pct | int))
+              else [])
+            + (['available memory ' ~ audit_host_mem_avail_pct ~ '% (warning below ' ~ audit_host_mem_avail_warn_pct ~ '%)']
+              if (audit_host_mem_avail_pct | float) < (audit_host_mem_avail_warn_pct | float)
+              else [])
+            + (['load per CPU ' ~ audit_host_load_per_cpu ~ ' (warning at ' ~ audit_host_load_per_cpu_warn ~ ')']
+              if (audit_host_load_per_cpu | float) >= (audit_host_load_per_cpu_warn | float)
+              else [])
+          }}
+
+    - name: Build the audit record for this host
+      ansible.builtin.set_fact:
+        audit_host_record:
+          host: "{{ inventory_hostname }}"
+          role: "{{ ((group_names | intersect(audit_host_roles)) + ['unknown']) | first }}"
+          status: "{{ 'CRIT' if (audit_host_crit | length) > 0 else ('WARN' if (audit_host_warn | length) > 0 else 'OK') }}"
+          rank: "{{ 1 if (audit_host_crit | length) > 0 else (2 if (audit_host_warn | length) > 0 else 3) }}"
+          os: "{{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}"
+          cpus: "{{ audit_host_cpus }}"
+          uptime_days: "{{ audit_host_uptime_days }}"
+          load1: "{{ audit_host_load1 }}"
+          mem_total_mb: "{{ audit_host_mem_total_mb }}"
+          mem_avail_pct: "{{ audit_host_mem_avail_pct }}"
+          max_disk_pct: "{{ audit_host_disk_max }}"
+          disks: "{{ audit_host_disk_out.stdout_lines }}"
+          ports: "{{ audit_host_ports }}"
+          issues: "{{ audit_host_crit + audit_host_warn }}"

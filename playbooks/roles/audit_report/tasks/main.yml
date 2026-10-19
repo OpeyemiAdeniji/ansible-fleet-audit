@@ -1,0 +1,79 @@
+---
+# Build the fleet reports. Run this role once, on the control node (localhost), after audit_host has run.
+# It reads every host's `audit_host_record` through hostvars, sorts the worst hosts first,
+# and writes the CSV, HTML and JSON files.
+
+- name: Stop early when the inventory has no fleet
+  ansible.builtin.assert:
+    that: (groups[audit_report_group] | default([])) | length > 0
+    fail_msg: "No hosts in group '{{ audit_report_group }}'. Is the simulated fleet running? Try: make fleet-up"
+    quiet: true
+
+- name: Fix one timestamp for every report file of this run
+  ansible.builtin.set_fact:
+    audit_report_run_id: "{{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}"
+
+- name: Assemble one record per host, including hosts that returned no data
+  ansible.builtin.set_fact:
+    audit_report_records_json: >-
+      {%- set out = [] -%}
+      {%- for h in groups[audit_report_group] | sort -%}
+      {%- set hv = hostvars[h] -%}
+      {%- if hv.audit_host_record is defined -%}
+      {%- set _ = out.append(hv.audit_host_record) -%}
+      {%- else -%}
+      {%- set unreachable = (hv.audit_host_reach | default({})).unreachable | default(false) -%}
+      {%- set _ = out.append({
+            'host': h,
+            'role': ((hv.group_names | intersect(audit_report_roles)) + ['unknown']) | first,
+            'status': 'UNREACHABLE' if unreachable else 'ERROR',
+            'rank': 0,
+            'issues': ['cannot connect over SSH'] if unreachable else ['connected, but the audit tasks failed']
+          }) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+
+- name: Parse the records and sort the worst hosts first
+  ansible.builtin.set_fact:
+    audit_report_records: >-
+      {{ ((audit_report_records_json | from_json) if audit_report_records_json is string else audit_report_records_json)
+         | sort(attribute='rank') }}
+
+- name: Create the reports folder
+  ansible.builtin.file:
+    path: "{{ audit_report_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Write the CSV and HTML reports (a timestamped copy and a "latest" copy)
+  ansible.builtin.template:
+    src: "report.{{ item[1] }}.j2"
+    dest: "{{ audit_report_dir }}/{{ item[0] }}.{{ item[1] }}"
+    mode: "0644"
+  loop: "{{ ['audit-' ~ audit_report_run_id, 'latest'] | product(['csv', 'html']) | list }}"
+
+- name: Write the JSON report (for other tools to read)
+  ansible.builtin.copy:
+    content: "{{ audit_report_records | to_nice_json }}\n"
+    dest: "{{ audit_report_dir }}/{{ item }}.json"
+    mode: "0644"
+  loop: ["audit-{{ audit_report_run_id }}", "latest"]
+
+- name: Summarise the result
+  ansible.builtin.debug:
+    msg:
+      - "Hosts audited: {{ audit_report_records | length }}"
+      - >-
+        UNREACHABLE/ERROR: {{ audit_report_records | selectattr('rank', 'equalto', 0) | list | length }},
+        CRIT: {{ audit_report_records | selectattr('status', 'equalto', 'CRIT') | list | length }},
+        WARN: {{ audit_report_records | selectattr('status', 'equalto', 'WARN') | list | length }},
+        OK: {{ audit_report_records | selectattr('status', 'equalto', 'OK') | list | length }}
+      - "Reports written to {{ audit_report_dir }}/latest.html (and .csv, .json)"
+
+- name: Fail the run when any host needs urgent attention
+  ansible.builtin.assert:
+    that: (audit_report_records | selectattr('rank', 'lt', 2) | list | length) == 0
+    fail_msg: "{{ audit_report_records | selectattr('rank', 'lt', 2) | list | length }} host(s) are CRIT, UNREACHABLE or ERROR. See the report."
+    quiet: true
+  when: audit_report_fail_on_critical | bool

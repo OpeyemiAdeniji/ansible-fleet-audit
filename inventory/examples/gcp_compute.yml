@@ -1,0 +1,23 @@
+---
+# EXAMPLE, not exercised in this repo. GCP inventory using the attached service account, not a key file.
+# Run this from a Compute Engine VM whose service account has roles/compute.viewer, or from CI using
+# workload identity federation.
+plugin: google.cloud.gcp_compute
+projects:
+  - my-fleet-project
+auth_kind: machineaccount
+filters:
+  - status = RUNNING
+  - labels.fleet = audit
+keyed_groups:
+  # label role=web puts the host in group "web"
+  - key: labels.role
+    prefix: ""
+    separator: ""
+groups:
+  fleet: "true"
+hostnames:
+  - name
+compose:
+  # Connect over private IPs. For no SSH key at all, use OS Login with IAP tunnelling.
+  ansible_host: networkInterfaces[0].networkIP

@@ -7,5 +7,5 @@ cd "$(dirname "$0")/.."
 
 rm -rf reports
 ansible-playbook -i tests/inventory-local.yml playbooks/audit.yml \
-    -e '{"expected_processes": [], "expected_ports": []}'
+    -e '{"audit_host_expected_processes": [], "audit_host_expected_ports": []}'
 python3 tests/check_report.py 1

@@ -1,4 +1,4 @@
 host,role,status,os,cpus,uptime_days,load1,mem_total_mb,mem_avail_pct,max_disk_pct,disks,listening_ports,issues
-{% for r in fleet_records %}
+{% for r in audit_report_records %}
 {{ r.host }},{{ r.role }},{{ r.status }},{{ r.os | default('') }},{{ r.cpus | default('') }},{{ r.uptime_days | default('') }},{{ r.load1 | default('') }},{{ r.mem_total_mb | default('') }},{{ r.mem_avail_pct | default('') }},{{ r.max_disk_pct | default('') }},"{{ r.disks | default([]) | join('; ') }}","{{ r.ports | default([]) | join(' ') }}","{{ r.issues | default([]) | join('; ') }}"
 {% endfor %}

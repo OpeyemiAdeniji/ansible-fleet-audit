@@ -1,0 +1,24 @@
+---
+# EXAMPLE, not exercised in this repo. AWS inventory using an assumed role, not access keys.
+# Run this from somewhere that already has an identity: an EC2 instance profile, or a GitHub
+# Actions job that signed in with OIDC. That identity only needs permission to assume the role below.
+plugin: amazon.aws.aws_ec2
+regions:
+  - eu-west-1
+# Short-lived credentials from STS. The role needs ec2:DescribeInstances and nothing else.
+iam_role_arn: arn:aws:iam::123456789012:role/ansible-fleet-audit-readonly
+filters:
+  instance-state-name: running
+  tag:Fleet: audit
+keyed_groups:
+  # tag Role=web puts the host in group "web"
+  - key: tags.Role
+    prefix: ""
+    separator: ""
+groups:
+  fleet: true
+hostnames:
+  - tag:Name
+compose:
+  # Connect over private IPs. For no SSH key at all, use AWS Systems Manager Session Manager instead.
+  ansible_host: private_ip_address
