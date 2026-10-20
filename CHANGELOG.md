@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-20
+
 ### Added
 - Estimated time until a disk is full, worked out from the earlier audit reports (ADR 0005). Shown as a "Disk full in (est.)" column in the HTML report, and as `disk_full_hours`, `disk_full_mount` and `disk_trend` in the JSON report.
 - `scripts/estimate_disk_fill.py`, with unit tests on fake history, including the ranking rules.
