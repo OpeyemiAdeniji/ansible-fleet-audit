@@ -127,6 +127,7 @@ See [`docs/adr/`](docs/adr/):
 - [0002](docs/adr/0002-dynamic-inventory-script.md): a dynamic inventory script instead of a static file
 - [0003](docs/adr/0003-collect-then-aggregate.md): collect on each host, aggregate on the control node
 - [0004](docs/adr/0004-no-long-lived-cloud-credentials.md): no long-lived cloud credentials; roles and workload identity
+- [0005](docs/adr/0005-rank-hosts-by-estimated-time-to-full.md): rank hosts by estimated time until a disk is full
 
 ## Contributing
 
