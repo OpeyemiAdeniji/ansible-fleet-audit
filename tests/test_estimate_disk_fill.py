@@ -223,5 +223,137 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
 
 
+# A small fake fleet. Each host: (rank, status, service_down, current disk percent, disk percent 3, 2 and 1 hours ago).
+FLEET = {
+    "web-down": (1, "CRIT", True, 50, (50, 50, 50)),
+    "web-fast": (1, "CRIT", False, 92, (83, 86, 89)),    # +3 points an hour: full in about 2.7 hours
+    "web-slow": (1, "CRIT", False, 94, (92, 93, 93)),    # +0.6 points an hour: full in about 10 hours
+    "web-flat": (1, "CRIT", False, 99, (99, 99, 99)),    # fullest disk, but not growing
+    "app-fill": (2, "WARN", False, 85, (70, 75, 80)),    # +5 points an hour: full in 3 hours
+    "app-stable": (2, "WARN", False, 88, (88, 88, 88)),  # fuller than app-fill, but not growing
+    "app-ok": (3, "OK", False, 20, (20, 20, 20)),
+}
+UNREACHABLE = {"host": "db-unreachable", "role": "db", "status": "UNREACHABLE", "rank": 0, "issues": ["cannot connect over SSH"]}
+BROKEN = {"host": "db-error", "role": "db", "status": "ERROR", "rank": 0, "issues": ["connected, but the audit tasks failed"]}
+
+
+def fleet_records():
+    records = [
+        {"host": host, "status": status, "rank": rank, "service_down": down, "max_disk_pct": now, "disks": [f"/ {now}%"]}
+        for host, (rank, status, down, now, _) in FLEET.items()
+    ]
+    return records + [dict(UNREACHABLE), dict(BROKEN)]
+
+
+def write_fleet_history(folder):
+    for index, hours_ago in enumerate((3, 2, 1)):
+        records = [{"host": host, "disks": [f"/ {values[index]}%"]} for host, (*_, values) in FLEET.items()]
+        write_history(folder, hours_ago, records)
+
+
+class RankingTests(unittest.TestCase):
+    def setUp(self):
+        self._folder = tempfile.TemporaryDirectory()
+        self.folder = self._folder.name
+        self.addCleanup(self._folder.cleanup)
+
+    def ranked(self):
+        records = fleet_records()
+        return estimate.rank_records(records, run_estimate(self.folder, records))
+
+    def test_hosts_are_ranked_by_urgency_when_there_is_history(self):
+        write_fleet_history(self.folder)
+        self.assertEqual(
+            [r["host"] for r in self.ranked()],
+            [
+                "db-error", "db-unreachable",                        # no data at all: first, by name
+                "web-down", "web-fast", "web-slow", "web-flat",      # CRIT: service down, then soonest full, then fullest
+                "app-fill", "app-stable",                            # WARN: the filling disk beats the fuller, stable one
+                "app-ok",
+            ],
+        )
+
+    def test_without_history_the_fullest_disk_comes_first(self):
+        self.assertEqual(
+            [r["host"] for r in self.ranked()],
+            [
+                "db-error", "db-unreachable",
+                "web-down", "web-flat", "web-slow", "web-fast",
+                "app-stable", "app-fill",
+                "app-ok",
+            ],
+        )
+
+    def test_a_stopped_service_beats_a_disk_that_is_nearly_full(self):
+        write_fleet_history(self.folder)
+        ranked = [r["host"] for r in self.ranked() if r["status"] == "CRIT"]
+        self.assertEqual(ranked[0], "web-down")
+
+    def test_records_carry_the_estimate(self):
+        write_fleet_history(self.folder)
+        by_host = {r["host"]: r for r in self.ranked()}
+        self.assertEqual(by_host["web-fast"]["disk_full_hours"], 2.7)
+        self.assertEqual(by_host["web-fast"]["disk_full_mount"], "/")
+        self.assertEqual(by_host["web-fast"]["disk_trend"], "estimated")
+        self.assertEqual(by_host["web-slow"]["disk_full_hours"], 10.0)
+        self.assertIsNone(by_host["web-flat"]["disk_full_hours"])
+        self.assertEqual(by_host["web-flat"]["disk_trend"], "not growing")
+        self.assertEqual(by_host["db-error"]["disk_trend"], "no disk data")
+
+    def test_the_records_that_were_passed_in_are_not_changed(self):
+        records = fleet_records()
+        estimate.rank_records(records, {})
+        self.assertNotIn("disk_trend", records[0])
+
+    def test_the_same_data_always_gives_the_same_order(self):
+        write_fleet_history(self.folder)
+        first = [r["host"] for r in self.ranked()]
+        self.assertEqual(first, [r["host"] for r in self.ranked()])
+
+    def test_text_values_from_templating_still_sort_correctly(self):
+        records = [
+            {"host": "b", "rank": "1", "service_down": "False", "max_disk_pct": "50"},
+            {"host": "a", "rank": "1", "service_down": "True", "max_disk_pct": "10"},
+        ]
+        self.assertEqual([r["host"] for r in estimate.rank_records(records, {})], ["a", "b"])
+
+    def test_records_that_are_not_dicts_are_dropped(self):
+        self.assertEqual(estimate.rank_records(["text", None, 5], {}), [])
+
+
+class RankedCommandLineTests(unittest.TestCase):
+    def setUp(self):
+        self._folder = tempfile.TemporaryDirectory()
+        self.folder = self._folder.name
+        self.addCleanup(self._folder.cleanup)
+
+    def run_main(self, *extra, stdin_text=""):
+        argv = ["--history-dir", self.folder, "--run-id", RUN_ID, *extra]
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch("sys.stdin", io.StringIO(stdin_text)), redirect_stdout(out), redirect_stderr(err):
+            code = estimate.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_ranked_output_is_a_list_in_report_order(self):
+        write_fleet_history(self.folder)
+        current = Path(self.folder) / "current.json"  # the name does not match audit-*.json, so it is not history
+        current.write_text(json.dumps(fleet_records()))
+        code, out, _ = self.run_main("--ranked", "--current", str(current))
+        self.assertEqual(code, 0)
+        hosts = [r["host"] for r in json.loads(out)]
+        self.assertEqual(hosts[:4], ["db-error", "db-unreachable", "web-down", "web-fast"])
+        self.assertEqual(len(hosts), len(FLEET) + 2)
+
+    def test_a_missing_current_file_is_an_error(self):
+        code, _, err = self.run_main("--current", "/does/not/exist.json")
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read", err)
+
+    def test_ranking_works_when_history_is_empty(self):
+        code, out, _ = self.run_main("--ranked", stdin_text=json.dumps(fleet_records()))
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)[0]["host"], "db-error")
+
+
 if __name__ == "__main__":
     unittest.main()

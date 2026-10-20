@@ -1,7 +1,7 @@
 ---
 # Build the fleet reports. Run this role once, on the control node (localhost), after audit_host has run.
-# It reads every host's `audit_host_record` through hostvars, sorts the worst hosts first,
-# and writes the CSV, HTML and JSON files.
+# It reads every host's `audit_host_record` through hostvars, ranks the hosts (most urgent first,
+# using earlier reports to estimate when each disk will be full), and writes the CSV, HTML and JSON files.
 
 - name: Stop early when the inventory has no fleet
   ansible.builtin.assert:
@@ -28,23 +28,63 @@
             'role': ((hv.group_names | intersect(audit_report_roles)) + ['unknown']) | first,
             'status': 'UNREACHABLE' if unreachable else 'ERROR',
             'rank': 0,
+            'service_down': false,
             'issues': ['cannot connect over SSH'] if unreachable else ['connected, but the audit tasks failed']
           }) -%}
       {%- endif -%}
       {%- endfor -%}
       {{ out | to_json }}
 
-- name: Parse the records and sort the worst hosts first
+- name: Parse the assembled records
   ansible.builtin.set_fact:
-    audit_report_records: >-
-      {{ ((audit_report_records_json | from_json) if audit_report_records_json is string else audit_report_records_json)
-         | sort(attribute='rank') }}
+    audit_report_unsorted: >-
+      {{ (audit_report_records_json | from_json) if audit_report_records_json is string else audit_report_records_json }}
 
 - name: Create the reports folder
   ansible.builtin.file:
     path: "{{ audit_report_dir }}"
     state: directory
     mode: "0755"
+
+- name: Rank the hosts, most urgent first
+  # scripts/estimate_disk_fill.py reads the earlier audit-<time>.json files, estimates when each disk
+  # will be full, and returns every record with the estimate added, already in report order (ADR 0005).
+  block:
+    - name: Save this run's records for the ranking script
+      ansible.builtin.copy:
+        content: "{{ audit_report_unsorted | to_json }}\n"
+        dest: "{{ audit_report_dir }}/.current-{{ audit_report_run_id }}.json"
+        mode: "0644"
+
+    - name: Run the ranking script
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ audit_report_trend_script }}"
+          - --ranked
+          - --current
+          - "{{ audit_report_dir }}/.current-{{ audit_report_run_id }}.json"
+          - --history-dir
+          - "{{ audit_report_dir }}"
+          - --run-id
+          - "{{ audit_report_run_id }}"
+          - --window-hours
+          - "{{ audit_report_trend_window_hours }}"
+          - --min-samples
+          - "{{ audit_report_trend_min_samples }}"
+          - --min-span-minutes
+          - "{{ audit_report_trend_min_span_minutes }}"
+      register: audit_report_ranked_out
+      changed_when: false
+
+    - name: Use the ranked records
+      ansible.builtin.set_fact:
+        audit_report_records: "{{ audit_report_ranked_out.stdout | from_json }}"
+  always:
+    - name: Remove the temporary file
+      ansible.builtin.file:
+        path: "{{ audit_report_dir }}/.current-{{ audit_report_run_id }}.json"
+        state: absent
 
 - name: Write the CSV and HTML reports (a timestamped copy and a "latest" copy)
   ansible.builtin.template:

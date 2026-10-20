@@ -1,6 +1,6 @@
 # 0005. Rank hosts by estimated time until a disk is full
 
-- Status: accepted
+- Status: accepted (amended 2026-10-20: the script also does the ranking, see "Where the logic lives")
 - Date: 2026-10-20
 
 ## Context
@@ -20,8 +20,8 @@ What already exists:
 
 1. **Keep alphabetical order inside a level**: predictable, but it ignores urgency completely.
 2. **Rank inside a level by the current numbers only** (fullest disk first): needs no history and is simple, but it cannot tell a stable disk from a filling one.
-3. **Estimate time-to-full from the saved history, with the logic in Jinja inside the role**: no extra language, but reading many files, parsing times and doing arithmetic in Jinja is hard to read and hard to test.
-4. **Estimate time-to-full from the saved history, with the logic in a small Python helper that the role calls**: the logic can be unit tested with fake history files, and it needs only the Python standard library.
+3. **Estimate time-to-full from the saved history, with the logic in Jinja inside the role**: no extra language, but reading many files, parsing times, doing arithmetic and sorting on several keys in Jinja is hard to read and hard to test.
+4. **Estimate time-to-full from the saved history, with the logic in a small Python script that the role calls**: the logic can be unit tested with fake history files, and it needs only the Python standard library.
 5. **Store history in a database or a monitoring system such as Prometheus**: more accurate and the right tool for production, but it is a different project. Project 8 (observability and SLOs) covers it with `predict_linear`.
 
 ## Decision
@@ -32,25 +32,25 @@ Option 4, with option 2 as the fallback when there is not enough history.
 - **Growth rate.** For each host and mount point, fit the best straight line through the samples in the window (least squares) and take its slope in percentage points per hour. A single odd sample, such as a one-off cleanup, then moves the result less than it would if only the oldest and newest samples were used.
 - **Minimum evidence.** An estimate needs at least `audit_report_trend_min_samples` (default 3) samples that span at least `audit_report_trend_min_span_minutes` (default 30). Otherwise the host gets no estimate.
 - **Estimate.** Only when the slope is above zero: hours until full = (100 minus the newest usage) divided by the slope. A flat or falling disk gets no estimate. A host's estimate is the smallest one among its mount points.
+- **Service flag.** The `audit_host` role adds `service_down` to each record: true when a required process is not running or a required port is not listening.
 - **Ranking inside a level.** In this order:
-  1. hosts with a stopped required process or a closed required port first, because their time to page is already zero;
+  1. hosts with `service_down` first, because their time to page is already zero;
   2. then the shortest estimated time-to-full, with hosts that have no estimate after the hosts that have one;
   3. then the fullest disk, highest first;
   4. then the host name.
 
   UNREACHABLE and ERROR hosts have no disk data, so they stay together at the top and are sorted by host name.
-- **Where the logic lives.** `scripts/estimate_disk_fill.py` reads the history folder and prints the estimates as JSON. The `audit_report` role runs it on the control node, merges the result into the records and then sorts. It uses only the Python standard library, so there is no new dependency.
-- **Reports.** The HTML, CSV and JSON reports get an "estimated full in" value for each host. It is labelled as an estimate everywhere.
+- **Where the logic lives.** `scripts/estimate_disk_fill.py` reads the history folder and the current run's records. With `--ranked` it prints the records, each with `disk_full_hours`, `disk_full_mount` and `disk_trend` added, already in report order. The `audit_report` role saves the current records to a temporary file, runs the script and uses its output. The script uses only the Python standard library, so there is no new dependency. The first version of this decision had the role do the sorting. Sorting on several keys, some ascending, some descending and some missing, is awkward in Jinja and easy to get wrong, so the script does it and the unit tests cover it.
+- **Reports.** The HTML report gets a "Disk full in (est.)" column. The CSV and JSON reports get `disk_full_hours` and `disk_trend`. It is labelled as an estimate everywhere.
 
 ## Consequences
 
 - No new storage and no new service: the history is the set of report files the tool already writes.
 - The ranking logic can be tested with fake history files, without any real servers.
-- The estimate only appears after several runs. The runbook has to tell the operator to run the audit on a schedule, for example every hour. The first runs show no estimate and use the fallback ranking.
+- The estimate only appears after several runs. The runbook has to tell the operator to run the audit on a schedule, for example every hour. The first runs show "not enough history" and use the fallback ranking.
 - The estimate is linear and the data are whole percentages, so it is coarse over short windows. It assumes the recent growth rate continues. It is a guide for ranking, not a prediction.
 - The window limits which files are read, not which files are kept. The folder still grows, so the runbook has to describe cleaning up old files. A retention setting can be added later.
-- The simulated fleet shares one kernel, so every container reports the same disk. Tests use fake history, and a small demo script can generate it.
-- The helper has to parse the text lines in `disks`. A structured list of mount points and percentages in the record would be cleaner, and is worth revisiting.
-- A required-process or required-port failure needs a structured flag in the record. Today it exists only inside the text of `issues`.
-- The CSV gains a column, so the report check in `tests/check_report.py` has to change with it.
+- The simulated fleet shares one kernel, so every container reports the same disk. Tests use fake history.
+- The script has to parse the text lines in `disks`. A structured list of mount points and percentages in the record would be cleaner, and is worth revisiting.
+- The CSV gains two columns at the end, so the existing columns keep their positions.
 - This covers disks only. Memory, error rates and other signals are out of scope. Revisit with Prometheus in Project 8.
