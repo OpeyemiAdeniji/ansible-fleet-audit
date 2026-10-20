@@ -52,7 +52,7 @@ jobs:
         run: ansible-lint
       - name: Syntax check
         run: ansible-playbook -i tests/inventory-local.yml playbooks/audit.yml --syntax-check
-      - name: Inventory unit tests
+      - name: Unit tests
         run: python3 -m unittest discover -s tests -v
       - name: End-to-end audit against the runner itself
         run: bash tests/run_local_audit.sh
