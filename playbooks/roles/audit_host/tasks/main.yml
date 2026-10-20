@@ -130,3 +130,6 @@
           disks: "{{ audit_host_disk_out.stdout_lines }}"
           ports: "{{ audit_host_ports }}"
           issues: "{{ audit_host_crit + audit_host_warn }}"
+          # True when a required process is not running or a required port is not listening.
+          # The report ranks these hosts first inside their level, because they are already down.
+          service_down: "{{ (audit_host_missing_procs | length) > 0 or (audit_host_missing_ports | length) > 0 }}"

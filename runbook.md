@@ -40,6 +40,18 @@ Open `reports/latest.html`. Hosts are sorted worst first.
 
 The `Issues` column says exactly what tripped. The CSV has the same data for sorting in a spreadsheet.
 
+Hosts are ranked by urgency inside each status. First a host with a stopped process or a closed port (it is already down), then the host whose disk is expected to fill soonest, then the fullest disk.
+
+The `Disk full in (est.)` column (`disk_full_hours` in the CSV and JSON) is that estimate, worked out from the earlier reports. `~3.0 h on /data` means "at the recent rate, `/data` is full in about 3 hours". Other values say why there is no estimate:
+
+| Shown | Meaning |
+|---|---|
+| `not enough history` | Fewer than 3 reports in the last 24 hours, or they cover less than 30 minutes. Run the audit on a schedule (section 7). |
+| `not growing` | Every disk is flat or shrinking. |
+| `no disk data` | The host returned no disk usage (UNREACHABLE or ERROR). |
+
+It is an estimate: it assumes the recent growth continues, and `df` reports whole percentages.
+
 ## 3. What to do for each finding
 
 ### UNREACHABLE
@@ -56,6 +68,8 @@ The `Issues` column says exactly what tripped. The CSV has the same data for sor
 2. The usual cause is a missing tool (`ss`, `ps`) or a full disk stopping commands from running.
 
 ### CRIT: disk
+
+Check the `Disk full in (est.)` column first. A small number means the disk is filling fast, so act on that host first.
 
 1. Find what is using the space: `du -xh --max-depth=1 <mount> | sort -h | tail`.
 2. Typical culprits: logs, old releases, package caches, core dumps.
@@ -107,3 +121,33 @@ Edit `playbooks/group_vars/all.yml` for thresholds and `web.yml`, `app.yml` or `
 | Every host UNREACHABLE | Missing or wrong SSH key. Run `make keys`, then `make fleet-up` to rebuild the image. |
 | `Permission denied` running the inventory script | Lost the executable bit: `chmod +x inventory/docker_inventory.py`. |
 | Run is slow | Raise `forks` in `ansible.cfg`, or check for many dead hosts (each costs up to the 10 s timeout). |
+
+## 7. Run the audit on a schedule (needed for the disk estimate)
+
+The disk estimate compares each run with the earlier ones, so the audit has to run repeatedly. One run an hour is a good start.
+
+On a Linux machine, open the scheduler with `crontab -e` and add this line. Replace `/path/to/ansible-fleet-audit` with the real folder:
+
+```cron
+0 * * * * cd /path/to/ansible-fleet-audit && .venv/bin/ansible-playbook playbooks/audit.yml >> reports/cron.log 2>&1
+```
+
+The five fields mean: minute 0 of every hour, every day. `cd` moves into the repository so the relative paths in `ansible.cfg` work, and `>> reports/cron.log 2>&1` keeps the output for troubleshooting.
+
+The tool never removes old reports. To delete the timestamped reports older than 7 days:
+
+```bash
+find reports -name 'audit-*' -mtime +7 -delete
+```
+
+Keep `audit_report_trend_window_hours` (24 by default) at or below the number of hours you keep.
+
+Settings, in `playbooks/group_vars/all.yml`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `audit_report_trend_window_hours` | 24 | Only reports from this many hours back are used. |
+| `audit_report_trend_min_samples` | 3 | Reports needed before an estimate is shown (the current run counts). |
+| `audit_report_trend_min_span_minutes` | 30 | Time those reports must cover. |
+
+WSL2 does not run cron by default. To try it by hand, run `make audit` a few times, at least 30 minutes apart. On the simulated fleet the containers do not fill up, so the column shows `not growing`. An estimate appears only for a host whose disk really grows.

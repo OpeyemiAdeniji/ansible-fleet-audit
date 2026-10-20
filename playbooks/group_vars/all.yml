@@ -16,3 +16,8 @@ audit_host_load_per_cpu_warn: 3.0     # 1-minute load average divided by CPU cou
 # Set true (or pass -e audit_report_fail_on_critical=true) to make the run exit non-zero when any host is
 # CRIT, UNREACHABLE or ERROR. Useful when the audit runs from a scheduler.
 audit_report_fail_on_critical: false
+
+# Disk-full estimate. Hosts are ranked by how soon a disk is expected to fill, using the earlier reports.
+audit_report_trend_window_hours: 24      # use reports from the last 24 hours
+audit_report_trend_min_samples: 3        # need at least 3 reports ...
+audit_report_trend_min_span_minutes: 30  # ... that together cover at least 30 minutes

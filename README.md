@@ -99,7 +99,9 @@ The audit roles do not care where hosts come from, only that they are in the `fl
 
 `reports/latest.html` is the one to open. `latest.csv` is for spreadsheets and `latest.json` is for other tools. Every run also keeps a timestamped copy. Reading a report and acting on it is covered in the [runbook](runbook.md).
 
-![Fleet audit report: worst hosts first](docs/img/report.png)
+Hosts are ranked by urgency, not only by status. Inside each status, a host with a stopped process or a closed port comes first, then the host whose disk is expected to fill soonest, then the fullest disk. The `Disk full in (est.)` column is that estimate. It is worked out from the earlier `audit-<time>.json` reports (a straight line through each disk's recent usage, see [ADR 0005](docs/adr/0005-rank-hosts-by-estimated-time-to-full.md)), so it needs the audit to run on a schedule. With fewer than 3 reports covering at least 30 minutes, the column says `not enough history` and hosts fall back to fullest disk first. Scheduling is in the [runbook](runbook.md#7-run-the-audit-on-a-schedule-needed-for-the-disk-estimate).
+
+![Fleet audit report: hosts ranked by urgency. Simulated fleet, with generated history for the estimate column.](docs/img/report.png)
 
 ## Cost estimate and teardown
 
@@ -118,6 +120,7 @@ make clean        # delete generated reports
 - **The SSH key is baked into the image.** Fine for a throwaway simulation, wrong for anything real.
 - **Read-only image filesystems are skipped** (`squashfs`, `iso9660`, `erofs`). They are always 100% full by design, so they would raise a false CRIT (snap packages on Ubuntu, Docker Desktop tools on WSL2).
 - Not tested on Windows. Use WSL2.
+- **The disk-full estimate is a guide, not a prediction.** It assumes the recent growth rate continues, `df` reports whole percentages, and it only covers disks. The simulated containers do not fill up, so on the simulated fleet the column usually shows `not growing` or `not enough history`.
 
 ## Design decisions
 

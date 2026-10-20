@@ -30,6 +30,7 @@
 <main>
 <h1>Fleet audit</h1>
 <div class="meta">Run {{ audit_report_run_id }} &middot; thresholds: disk warn {{ audit_host_disk_warn_pct | default('n/a') }}% / crit {{ audit_host_disk_crit_pct | default('n/a') }}%, available memory below {{ audit_host_mem_avail_warn_pct | default('n/a') }}%, load per CPU {{ audit_host_load_per_cpu_warn | default('n/a') }}</div>
+<div class="meta">Order inside each status: a stopped service first, then the disk expected to fill soonest (an estimate from earlier runs), then the fullest disk.</div>
 
 <div class="tiles">
   <div class="tile"><b>{{ audit_report_records | length }}</b>hosts</div>
@@ -42,7 +43,7 @@
 <div class="table-wrap">
 <table>
 <thead>
-<tr><th>Host</th><th>Role</th><th>Status</th><th>Issues</th><th>Disk max</th><th>Mem avail</th><th>Load</th><th>CPUs</th><th>Uptime (d)</th><th>OS</th><th>Listening ports</th></tr>
+<tr><th>Host</th><th>Role</th><th>Status</th><th>Issues</th><th>Disk max</th><th>Disk full in (est.)</th><th>Mem avail</th><th>Load</th><th>CPUs</th><th>Uptime (d)</th><th>OS</th><th>Listening ports</th></tr>
 </thead>
 <tbody>
 {% for r in audit_report_records %}
@@ -52,6 +53,7 @@
   <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
   <td class="wrap">{{ r.issues | default([]) | join('; ') | e }}</td>
   <td>{{ r.max_disk_pct | default('-') }}{% if r.max_disk_pct is defined %}%{% endif %}</td>
+  <td>{% if r.disk_full_hours is defined and r.disk_full_hours is not none %}~{{ r.disk_full_hours }} h on {{ r.disk_full_mount | default('', true) | e }}{% else %}{{ r.disk_trend | default('-') | e }}{% endif %}</td>
   <td>{{ r.mem_avail_pct | default('-') }}{% if r.mem_avail_pct is defined %}%{% endif %}</td>
   <td>{{ r.load1 | default('-') }}</td>
   <td>{{ r.cpus | default('-') }}</td>

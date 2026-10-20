@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Estimated time until a disk is full, worked out from the earlier audit reports (ADR 0005). Shown as a "Disk full in (est.)" column in the HTML report, and as `disk_full_hours`, `disk_full_mount` and `disk_trend` in the JSON report.
+- `scripts/estimate_disk_fill.py`, with unit tests on fake history, including the ranking rules.
+- A `service_down` flag in each host record: true when a required process is not running or a required port is not listening.
+- Settings `audit_report_trend_window_hours`, `audit_report_trend_min_samples` and `audit_report_trend_min_span_minutes`.
+- Runbook section on running the audit on a schedule.
+- ADR 0005: rank hosts by estimated time until a disk is full.
+
+### Changed
+- Inside each status, hosts are now ranked by urgency instead of alphabetically: a stopped service first, then the disk expected to fill soonest, then the fullest disk, then the host name.
+- The CSV report has two new columns at the end, `disk_full_hours` and `disk_trend`. Existing columns keep their positions.
+- The unit-test step in the Makefile and CI is no longer called "inventory" tests.
+
 ## [0.2.0] - 2026-10-19
 
 ### Added

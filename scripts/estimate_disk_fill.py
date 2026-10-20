@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
-"""Estimate how many hours until each host's disks are full, from earlier audit runs.
+"""Estimate how many hours until each host's disks are full, and rank the hosts by urgency.
 
 This is the logic behind ADR 0005 (docs/adr/0005-rank-hosts-by-estimated-time-to-full.md).
 
 Input:
   * the history folder: the `audit-<run id>.json` files that every audit run writes
     (the run id is the UTC time of the run, for example 20261020T103000Z);
-  * the current run's host records, as JSON on standard input;
+  * the current run's host records, as JSON, from the file given with --current or from
+    standard input;
   * the current run id, so the current run counts as the newest sample.
 
-Output (standard output): JSON, one entry per host:
+Output (standard output), JSON.
+
+Without --ranked, one entry per host:
   {"web-01": {"status": "estimated", "hours_to_full": 6.5, "mount": "/var",
               "slope_pct_per_hour": 1.2, "samples": 5}, ...}
 
-`status` is one of:
+With --ranked, the host records themselves, each with `disk_full_hours`, `disk_full_mount` and
+`disk_trend` added, in report order: most urgent first (see sort_key).
+
+`status` (shown as `disk_trend` in ranked output) is one of:
   estimated          a growing disk, and enough history to estimate when it will be full
   not growing        the disks are flat or falling, so there is nothing to estimate
   not enough history fewer samples than the minimum, or they cover too short a time
@@ -23,6 +29,7 @@ Only the Python standard library is used.
 """
 import argparse
 import json
+import math
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -167,10 +174,69 @@ def estimate_hosts(series, min_samples, min_span_minutes):
     return results
 
 
+def as_number(value, default):
+    """Turn a value into a float, or return the default when that is not possible."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def is_true(value):
+    """True for True and for the text 'true' (any case), so both JSON and templated values work."""
+    return value is True or str(value).strip().lower() == "true"
+
+
+def sort_key(record):
+    """The order of the report, most urgent first.
+
+    1. rank: UNREACHABLE and ERROR (0), then CRIT (1), WARN (2), OK (3)
+    2. a stopped required process or a closed required port first: time to page is already zero
+    3. the shortest estimated time until a disk is full (hosts without an estimate come last)
+    4. the fullest disk
+    5. the host name, so the order is always the same for the same data
+    """
+    return (
+        as_number(record.get("rank"), 3),
+        0 if is_true(record.get("service_down")) else 1,
+        as_number(record.get("disk_full_hours"), math.inf),
+        -as_number(record.get("max_disk_pct"), 0),
+        str(record.get("host", "")),
+    )
+
+
+def rank_records(records, estimates):
+    """Add the estimate to every record and sort the records, most urgent first.
+
+    The records that were passed in are not changed: every result is a copy.
+    """
+    unknown = {"status": "no disk data", "hours_to_full": None}
+    ranked = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        trend = estimates.get(record.get("host"), unknown)
+        ranked.append(
+            dict(
+                record,
+                disk_full_hours=trend.get("hours_to_full"),
+                disk_full_mount=trend.get("mount"),
+                disk_trend=trend.get("status"),
+            )
+        )
+    return sorted(ranked, key=sort_key)
+
+
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--history-dir", required=True, help="folder with audit-<run id>.json files")
     parser.add_argument("--run-id", required=True, help="run id of the current run, e.g. 20261020T103000Z")
+    parser.add_argument(
+        "--current", default="-", help="JSON file with the current run's host records (default: standard input)"
+    )
+    parser.add_argument(
+        "--ranked", action="store_true", help="print the host records, ranked and with the estimate added"
+    )
     parser.add_argument("--window-hours", type=float, default=24, help="how far back to look (default 24)")
     parser.add_argument("--min-samples", type=int, default=3, help="samples needed for an estimate (default 3)")
     parser.add_argument(
@@ -184,20 +250,30 @@ def parse_args(argv):
     return args
 
 
+def read_current(path):
+    """Read the current run's records from a file, or from standard input when the path is '-'."""
+    text = sys.stdin.read() if path == "-" else Path(path).read_text()
+    return json.loads(text)
+
+
 def main(argv=None):
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        current = json.load(sys.stdin)
+        current = read_current(args.current)
+    except OSError as error:
+        print(f"error: cannot read the current records: {error}", file=sys.stderr)
+        return 2
     except json.JSONDecodeError as error:
-        print(f"error: standard input is not valid JSON: {error}", file=sys.stderr)
+        print(f"error: the current records are not valid JSON: {error}", file=sys.stderr)
         return 2
     if not isinstance(current, list):
-        print("error: standard input must be a JSON list of host records", file=sys.stderr)
+        print("error: the current records must be a JSON list of host records", file=sys.stderr)
         return 2
     samples = load_history(args.history_dir, args.now, args.window_hours)
     samples.append((args.now, current))
     results = estimate_hosts(build_series(samples), args.min_samples, args.min_span_minutes)
-    json.dump(results, sys.stdout, indent=2, sort_keys=True)
+    output = rank_records(current, results) if args.ranked else results
+    json.dump(output, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0
 

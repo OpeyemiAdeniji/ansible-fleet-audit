@@ -14,3 +14,14 @@ audit_report_dir: "{{ playbook_dir | dirname }}/reports"
 # Set true (or pass -e audit_report_fail_on_critical=true) to make the run exit non-zero when any host is
 # CRIT, UNREACHABLE or ERROR. Useful when the audit runs from a scheduler.
 audit_report_fail_on_critical: false
+
+# Estimate of the time until a disk is full (ADR 0005). It is worked out from the earlier
+# audit-<time>.json files in audit_report_dir, so the audit has to run repeatedly (see the runbook).
+# The script that does the work. The default finds it from the role folder, wherever the playbook is.
+audit_report_trend_script: "{{ role_path | dirname | dirname | dirname }}/scripts/estimate_disk_fill.py"
+# Only reports from the last this many hours are used.
+audit_report_trend_window_hours: 24
+# An estimate needs at least this many reports (the current run counts as one) ...
+audit_report_trend_min_samples: 3
+# ... and they must cover at least this many minutes.
+audit_report_trend_min_span_minutes: 30
